@@ -154,6 +154,7 @@ nav.tabs button.on{color:var(--ach)}
   <p>鼓 Loop · 电子琴和弦织体 · 弦乐铺底<br>给吉他即兴的随身伴奏</p>
   <button class="btn" id="unlockBtn">点击开始</button>
   <p style="font-size:11.5px;color:#6f817c">iPhone 请关闭静音拨片，或调高媒体音量</p>
+  <p class="appver" style="font-size:10.5px;color:#4a5d59;margin:0"></p>
   <p id="a2hs" class="hidden" style="font-size:11.5px;color:#a4b5b0;border:1px dashed #2b3b39;border-radius:10px;padding:8px 12px;line-height:1.8">装成 App：iPhone 用 Safari 点「分享 → 添加到主屏幕」<br>安卓用浏览器菜单「添加到主屏幕 / 安装应用」<br>装好后从桌面图标打开，断网也能用</p>
 </div>
 
@@ -263,7 +264,7 @@ nav.tabs button.on{color:var(--ach)}
       <div class="lbl" style="line-height:1.6">打的点总是偏晚就调大；系统输出延迟已自动扣除（<span id="sysLat">—</span>）。开量化时影响很小。</div>
     </div>
     <div class="sec">
-      <h3>数据</h3>
+      <h3>数据 <span class="appver" style="font-weight:400;color:#6f817c;font-size:11.5px;margin-left:6px"></span></h3>
       <div class="bar" style="margin:0">
         <button class="btn sm warn" id="mClearAll">清空全部（鼓+和弦进行）</button>
         <button class="btn sm" id="mReset">恢复默认示例</button>
@@ -1033,7 +1034,11 @@ function bind(){
     if(e.key==='Enter'){toggleRec();return;}
     const id=KEYPAD[e.key.toLowerCase()];if(id){initAudio();hitPad(id,e);}});
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&ctx)releaseAllHolds();if(!document.hidden&&ctx&&ctx.state!=='running')ctx.resume();});
-  ['pointerup','pointercancel'].forEach(n=>document.addEventListener(n,e=>{if(ctx)releaseHold(e.pointerId);}));
+  // 松手淡出：只认 pointerup。iOS 长按时系统手势可能先发 pointercancel，不能据此停声，
+  // 改由「所有手指都离开屏幕」(touchend/touchcancel 且 touches 为空) 兜底释放
+  document.addEventListener('pointerup',e=>{if(ctx)releaseHold(e.pointerId);});
+  ['touchend','touchcancel'].forEach(n=>document.addEventListener(n,e=>{if(ctx&&e.touches.length===0)releaseAllHolds();}));
+  document.addEventListener('contextmenu',e=>{if(e.target.closest&&e.target.closest('.pad,[data-r],[data-d]'))e.preventDefault();});
   window.addEventListener('blur',()=>{if(ctx)releaseAllHolds();});
   // iOS Safari 防缩放：user-scalable=no 会被 Safari 忽略，所以用事件拦截
   // 1) 鼓垫、和弦键、BPM 加减、TAP 都靠 pointerdown 触发，不需要 click，直接吞掉 touchend，连点不会被识别成双击放大
@@ -1054,6 +1059,7 @@ function bind(){
 }
 
 /* ---- 启动 ---- */
+const APP_VER='2026-11-24c';$$('.appver').forEach(el=>el.textContent='版本 '+APP_VER);
 // iOS 主屏图标只认 PNG：运行时把 icon.svg 画成 180px PNG 填给 apple-touch-icon
 (()=>{const im=new Image();im.onload=()=>{try{const c=document.createElement('canvas');c.width=c.height=180;c.getContext('2d').drawImage(im,0,0,180,180);$('#ati').href=c.toDataURL('image/png');}catch(e){}};im.src='icon.svg';})();
 if(!(matchMedia('(display-mode: standalone)').matches||navigator.standalone))$('#a2hs').classList.remove('hidden');
