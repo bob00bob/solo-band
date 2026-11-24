@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#141e1d">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -18,6 +18,7 @@
   --tx:#dcece8;--tx2:#a4b5b0;--tx3:#6f817c;--rec:#b8574f;--onbg:#1f3a35;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{touch-action:manipulation}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);
   font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;
   overscroll-behavior:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
@@ -683,7 +684,7 @@ function tick(){
 function start(countIn){
   initAudio();ctx.resume();
   T.anchorBeat=countIn?-S.bpb:0;T.anchorTime=ctx.currentTime+.08;T.sched=T.anchorBeat;T.playing=true;T.lastLoop=-1;
-  strState.voices=[];strState.key='';VL.keys.k='';VL.strings.k='';
+  releaseAllHolds();strState.voices=[];strState.key='';VL.keys.k='';VL.strings.k='';
   clearInterval(T.timer);T.timer=setInterval(tick,25);tick();
   try{if(navigator.wakeLock)navigator.wakeLock.request('screen').then(w=>T.wake=w).catch(()=>{});}catch(e){}
   updTransport();
@@ -745,7 +746,7 @@ function onChord(prefix,c,e){
     else if(editPos==='a'){trackRemove(P.track,st,st+half);trackPut(P.track,st,c);editPos='b';}
     else{trackRemove(P.track,st+half,st+S.bpb);trackPut(P.track,st+half,c);editPos='a';selCell.bar=(selCell.bar+1)%P.bars;}
     live[part].cur=null;live[part].pend=null;
-    if(!T.playing)preview(sound,c);
+    if(!T.playing)preview(sound,c,e);
     renderPanels();save();return;
   }
   if(T.playing){
@@ -758,16 +759,26 @@ function onChord(prefix,c,e){
       live[part].pend={c:{r:c.r,q:c.q},from:Math.max(0,Math.round(b/g)*g)};
     }
   }else{
-    preview(sound,c);
+    preview(sound,c,e);
     if(!P.track.filter(x=>x.b<P.bars*S.bpb).length)live[part].cur={r:c.r,q:c.q};
   }
   updStatus();
 }
-function preview(sound,c){
+function preview(sound,c,e){
   const t=ctx.currentTime+.02;
   if(sound==='keys'){const vo=voicing('keys',c);keyNote(bassNote(c,0),t,1.4,.7);vo.forEach((m,i)=>keyNote(m,t+i*.014,1.4,.6));}
+  else if(e&&e.pointerId!=null)holdStr(c,e.pointerId);   // 弦乐：按住一直响，松手淡出
   else{const ns=stringNotes(c);ns.forEach((m,i)=>{const v=strVoice(m,t,i<2?.06:.052,Math.min(S.strings.attack,.35),A.strings.g);v.release(t+1.4,.8);});}
 }
+
+/* 弦乐试听：按住持续发声，松手 STR_FADE 秒淡出；按 pointerId 管理，多指互不干扰 */
+const STR_FADE=.45,strHold=new Map();
+function holdStr(c,pid){
+  releaseHold(pid);const t=ctx.currentTime+.01,dest=S.strings.mode==='tremolo'?A.strTrem:A.strings.g,atk=Math.min(S.strings.attack,.35);
+  strHold.set(pid,stringNotes(c).map((m,i)=>strVoice(m,t,i<2?.06:.052,atk,dest)));
+}
+function releaseHold(pid){const vs=strHold.get(pid);if(!vs)return;strHold.delete(pid);const t=ctx.currentTime;vs.forEach(v=>v.release(t,STR_FADE));}
+function releaseAllHolds(){[...strHold.keys()].forEach(releaseHold);}
 
 /* ---------------- UI ---------------- */
 let curTab='drums',drumDirty=true;
@@ -1021,7 +1032,24 @@ function bind(){
     if(e.code==='Space'){e.preventDefault();initAudio();$('#unlock').classList.add('hidden');togglePlay();return;}
     if(e.key==='Enter'){toggleRec();return;}
     const id=KEYPAD[e.key.toLowerCase()];if(id){initAudio();hitPad(id,e);}});
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&ctx&&ctx.state!=='running')ctx.resume();});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden&&ctx)releaseAllHolds();if(!document.hidden&&ctx&&ctx.state!=='running')ctx.resume();});
+  ['pointerup','pointercancel'].forEach(n=>document.addEventListener(n,e=>{if(ctx)releaseHold(e.pointerId);}));
+  window.addEventListener('blur',()=>{if(ctx)releaseAllHolds();});
+  // iOS Safari 防缩放：user-scalable=no 会被 Safari 忽略，所以用事件拦截
+  // 1) 鼓垫、和弦键、BPM 加减、TAP 都靠 pointerdown 触发，不需要 click，直接吞掉 touchend，连点不会被识别成双击放大
+  const FAST_TAP='.pad,[data-r],[data-d],#bpmDn,#bpmUp,#bTap';
+  document.addEventListener('touchend',e=>{if(e.target.closest&&e.target.closest(FAST_TAP))e.preventDefault();},{passive:false});
+  // 2) 其他区域（普通按钮、按钮之间的缝隙等）320ms 内的第二次轻点也拦掉，避免双击放大；
+  //    拦掉会吞掉这次 click，所以对按钮/开关手动补发一次 click，快速连点也不丢操作
+  let lastTouchEnd=0;
+  document.addEventListener('touchend',e=>{
+    const n=Date.now(),t=e.target.closest?e.target:e.target.parentElement,quick=n-lastTouchEnd<320;lastTouchEnd=n;
+    if(!quick||!t||t.closest('input,select')||t.closest(FAST_TAP)||e.touches.length)return;
+    e.preventDefault();const c=t.closest('button,.cell,.sw,.chip');if(c)c.click();
+  },{passive:false});
+  // 3) 双指捏合缩放、双击放大兜底
+  ['gesturestart','gesturechange','gestureend'].forEach(n=>document.addEventListener(n,e=>e.preventDefault(),{passive:false}));
+  document.addEventListener('dblclick',e=>e.preventDefault(),{passive:false});
   window.addEventListener('resize',()=>{drumDirty=true;});
 }
 

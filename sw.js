@@ -1,5 +1,5 @@
 // 一人乐队 Service Worker：页面走网络优先（便于更新），其他资源缓存优先，支持离线
-const CACHE = 'soloband-v3';
+const CACHE = 'soloband-v4';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', e => {
